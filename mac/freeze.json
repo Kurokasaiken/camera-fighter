@@ -1,6 +1,6 @@
 {
-  "artifact_sha": "72851304e97c5158551252fa1e570429cc160ea31d3edb3791a010b60189e497",
-  "commit_sha": "3660fffe38975002156c810a28135f62ac46b978",
+  "artifact_sha": "fc4b4e25017096ffd9825100bcb2dadbf11197b6076076f9ef9367374f7da667",
+  "commit_sha": "177d02216ebea649a50164ba593b423ff9e57f3c",
   "contracts": {
     "T_MATCH_MS": 300,
     "T_NEAR_MS": 90,
@@ -102,14 +102,14 @@
       "walk"
     ]
   },
-  "created": "2026-09-09T00:55:20",
+  "created": "2026-09-09T01:11:56",
   "file_hashes": {
     "body_model.py": "fa213a3dec0e7423f101b49eed48b4c9e83e518fc3c23627bbf166bb23d6411b",
     "capsule.py": "180fdb6f82bc73992b77b427d6576229b2cbb900d2596096bb931ca02e5cf2e3",
     "combo_engine.py": "bea23f79c398e9239dd3b8c0890b42bb2e152005bb54ce1067ad8fa6b6a4f4c7",
     "combos.json": "09597b1e3c2334047d66d19a739ad2d67340b34171e9ab00d69a10c0226d37ac",
     "contracts.py": "8cfe7f96a18bc273a4224a302d6619b57cdce0e43ecdada19811e5638d34652d",
-    "evaluate.py": "95b94543c55898947bc8de0683a34b90113c3d9128c7faa069a1be2fa3bfa0ad",
+    "evaluate.py": "7065c89c6732d42f781c4be1f7378331334eccd67fbbf6a3e2c9635acd9d7d35",
     "g05_sanity.py": "38c9bf14703f278e8b6562b05cac3f3681822b04d5085500f34f71a726146f51",
     "hit_signal.py": "b24dca312edbc835e481e196f8eff5c5a3c3029b55e8cd41c331aa74bd5b46a8",
     "jitter_buffer.py": "e52c393145c0443c3dec230e9dce44cc8ebedb58126540debdfe10ecbfc63c9d",
