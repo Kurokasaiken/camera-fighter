@@ -54,7 +54,7 @@ def main():
     split = sys.argv[3] if len(sys.argv) > 3 else "calibration"
     note = " ".join(sys.argv[4:])
     assert gesture in GESTURES, f"gesture sconosciuto: {GESTURES}"
-    assert split in ("calibration", "evaluation")
+    assert split in ("calibration", "validation", "holdout")
 
     sid = f"{time.strftime('%Y%m%d-%H%M%S')}-{gesture}-{uuid.uuid4().hex[:6]}"
 
@@ -95,23 +95,40 @@ def main():
     import os
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # marks -> ground truth intervals su capture_ts del frame piu' vicino
-    # (regola deterministica: nearest capture_ts, tie-break seq_id minore)
+    # marks -> ground truth su capture_ts del frame piu' vicino
+    # (regola deterministica: nearest capture_ts, tie-break seq_id minore).
+    # Schema cf-contracts/1: onset_interval = [capture - half_frame,
+    # capture + half_frame] — l'incertezza di annotazione (~1 frame) e'
+    # proprieta' della procedura, non un valore fisso.
     gt = []
+    frame_gap_ms = 59.0
+    if len(entries) > 1:
+        ts = sorted(float(e["payload"].get("ts", 0)) for e in entries)
+        frame_gap_ms = ts[-1] - ts[-2] or 59.0
     for i in range(0, len(marks) - 1, 2):
         s, e2 = marks[i], marks[i + 1]
         def nearest(m):
             best = min(entries, key=lambda x: (abs(x["arrival_ts"] - m),
                                                x["seq_id"]))
             return float(best["payload"].get("ts", 0))
-        gt.append({"gesture": gesture, "side": side,
-                   "start_ts": nearest(s), "end_ts": nearest(e2)})
+        onset = nearest(s)
+        half = frame_gap_ms / 2
+        gt.append({"action": gesture, "side": side,
+                   "onset_interval": [onset - half, onset + half],
+                   "annotation_ts": s, "confidence": 1.0,
+                   "end_ts": nearest(e2),
+                   # retrocompat con evaluate.py legacy
+                   "gesture": gesture, "start_ts": onset})
     if len(marks) % 2:
         print("[REC] WARN: mark dispari, ultimo ignorato")
 
+    import contracts as _c
     meta = {
+        "schema": _c.SCHEMA_VERSION,
         "session_id": sid, "gesture": gesture, "side": side,
-        "split": split, "note": note, "pipeline_sha": git_sha(),
+        "split": split, "dataset_id": f"{time.strftime('%Y%m%d')}",
+        "gt_protocol_version": "gt/1",
+        "note": note, "pipeline_sha": git_sha(),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "n_frames": len(entries),
         "span_ms": (entries[-1]["arrival_ts"] - entries[0]["arrival_ts"]

@@ -15,3 +15,6 @@ android/local.properties
 *.keystore
 .idea/
 local.properties
+mac/gates.json
+mac/sessions_holdout.sealed
+mac/sessions/
