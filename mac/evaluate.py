@@ -1,18 +1,15 @@
-"""T-006 — Evaluator PLAN-048e: metriche detection su sessioni con GT.
+"""G1+ — Evaluator unica autorita' (PLAN-048e v3.1).
 
-Carica sessions/*.meta.json (SOLO split=evaluation se --eval, o tutte),
-replays le tracce, confronta eventi predetti vs ground truth.
+Fail-closed: richiede freeze verificato, meta con schema cf-contracts/1,
+GT validati via contracts.validate_gt_event, timebase via
+contracts.estimate_offset (offset non stimabile => sessione esclusa).
 
-Regole pre-registrate (freeze artifact):
-- event matching: overlap temporale oppure |onset - gt.start| <= TOL_ONSET
-  capture_ts; un GT puo' assorbire al massimo un predetto (greedy per onset)
-- "gioco attivo" = unione degli intervalli GT +-PAD_MS
-- FP/min riportato su active E su total span (nessun denominatore nascosto)
-- metriche primarie: precision, recall, event-level F1, FP/min, latency
-  (onset error). TN frame-level NON decisionale.
-- bootstrap CI: resampling a livello SESSIONE (non frame: pseudoreplica)
+Matching: contracts.match_events — unico algoritmo autorizzato.
+Split: default "validation"; --split calibration|validation; --final
+apre l'holdout via holdout_lock.open_holdout (richiede gate G3).
 
-Uso: venv/bin/python evaluate.py [sessions_dir] [--eval]
+Uso:
+  venv/bin/python evaluate.py [sessions_dir] [--split validation] [--final]
 """
 
 from __future__ import annotations
@@ -25,15 +22,16 @@ import sys
 
 import msgpack
 
+import contracts
+import freeze_artifact
 from jitter_buffer import JitterBuffer
 from pipeline import Pipeline
 
-TOL_ONSET_MS = 300        # tolleranza onset evento (pre-registrata)
-PAD_MS = 250              # padding "gioco attivo" attorno agli intervalli GT
+PAD_MS = 250
 BOOTSTRAP_N = 2000
 
 
-def replay(path: str) -> list:
+def replay(path: str):
     entries = msgpack.unpackb(open(path, "rb").read(), raw=False)
     pipe = Pipeline("combos.json")
     jb = JitterBuffer(on_emit=lambda ef: pipe.process(ef))
@@ -44,89 +42,114 @@ def replay(path: str) -> list:
     return pipe.outputs, entries
 
 
-def seq_to_ts(entries) -> dict:
-    return {e["seq_id"]: float(e["payload"].get("ts", 0)) for e in entries}
+def _norm_action(raw: str):
+    """'punch_left' -> ('punch','left'); 'jab' -> ('jab','unknown')."""
+    for s in ("_left", "_right"):
+        if raw.endswith(s):
+            return raw[: -len(s)], s[1:]
+    return raw, "unknown"
 
 
-def match_events(gt: list, pred: list):
-    """Greedy per onset. Ritorna (tp, fn, fp, onset_errs)."""
-    gt = sorted(gt, key=lambda g: g["start_ts"])
-    pred = sorted(pred, key=lambda p: p["ts"])
-    used_g, used_p = set(), set()
-    onset_errs = []
-    for pi, p in enumerate(pred):
-        for gi, g in enumerate(gt):
-            if gi in used_g:
-                continue
-            overlap = p["ts"] >= g["start_ts"] - TOL_ONSET_MS and \
-                p["ts"] <= g["end_ts"] + TOL_ONSET_MS
-            if overlap:
-                used_g.add(gi)
-                used_p.add(pi)
-                onset_errs.append(abs(p["ts"] - g["start_ts"]))
-                break
-    return (len(used_p), len(gt) - len(used_g),
-            len(pred) - len(used_p), onset_errs)
+def session_metrics(meta: dict, entries: list, outputs: list) -> dict:
+    """Metriche di una sessione — contratto contracts.match_events."""
+    contracts.estimate_offset(entries)   # INVALID_SESSION se non stimabile
+    s2t = {e["seq_id"]: float(e["payload"].get("ts", 0)) for e in entries}
+    det = []
+    for i, o in enumerate(outputs):
+        for m in o.motion_events:
+            act, side = _norm_action(m.action)
+            det.append({"event_id": f"{meta['session_id']}#{i}",
+                        "action": act, "side": side,
+                        "onset_ts": s2t.get(m.seq_end, 0),
+                        "emitted_ts": 0.0,
+                        "tracking_quality": "GOOD"})
+    gt = [contracts.validate_gt_event(g) for g in meta.get("ground_truth", [])]
+    r = contracts.match_events(gt, det)
+    span = (entries[-1]["payload"]["ts"] - entries[0]["payload"]["ts"]) \
+        if entries else 1
+    onset = sorted(r["onset_errs"])
+    return {
+        "sid": meta["session_id"], "gesture": meta["gesture"],
+        **{k: r[k] for k in ("tp", "miss", "fp", "suppressed",
+                             "lr_confusion", "unknown_side")},
+        "prec": r["tp"] / (r["tp"] + r["fp"]) if r["tp"] + r["fp"] else 0,
+        "rec": r["tp"] / (r["tp"] + r["miss"]) if r["tp"] + r["miss"] else 0,
+        "onset_p50": onset[len(onset) // 2] if onset else 0,
+        "onset_p95": onset[int(len(onset) * 0.95)] if onset else 0,
+        "fp_min_total": r["fp"] / (span / 60000) if span else 0,
+        "unknown_rate": r["unknown_side"] / len(det) if det else 0,
+        "n_det": len(det), "n_gt": len(gt),
+    }
 
 
-def evaluate(sessions_dir: str = "sessions", only_eval: bool = True):
+def evaluate(sessions_dir: str = "sessions", split: str = "validation"):
+    freeze_artifact.verify()   # fail-closed: artifact deve essere integro
     metas = sorted(glob.glob(os.path.join(sessions_dir, "*.meta.json")))
-    results = []
+    results, excluded = [], []
     for mp in metas:
-        meta = json.load(open(mp))
-        if only_eval and meta.get("split") != "evaluation":
+        try:
+            meta = contracts.validate_session_meta(json.load(open(mp)))
+        except contracts.ContractError as e:
+            excluded.append((mp, str(e)))
+            continue
+        if meta["split"] != split:
             continue
         trace = mp.replace(".meta.json", ".trace")
         if not os.path.exists(trace):
+            excluded.append((mp, "trace mancante"))
             continue
-        outputs, entries = replay(trace)
-        s2t = seq_to_ts(entries)
-        pred = [{"ts": s2t.get(m.seq_end, 0), "action": m.action,
-                 "gesture": meta["gesture"]}
-                for o in outputs for m in o.motion_events]
-        gt = meta.get("ground_truth", [])
-        tp, fn, fp, errs = match_events(gt, pred)
-        span = (entries[-1]["payload"]["ts"] - entries[0]["payload"]["ts"]) \
-            if entries else 1
-        active = sum(g["end_ts"] - g["start_ts"] + 2 * PAD_MS for g in gt) or 1
-        results.append({
-            "sid": meta["session_id"], "gesture": meta["gesture"],
-            "tp": tp, "fn": fn, "fp": fp,
-            "prec": tp / (tp + fp) if tp + fp else 0,
-            "rec": tp / (tp + fn) if tp + fn else 0,
-            "onset_ms": sum(errs) / len(errs) if errs else 0,
-            "fp_min_total": fp / (span / 60000) if span else 0,
-            "fp_min_active": fp / (active / 60000),
-        })
+        try:
+            outputs, entries = replay(trace)
+            results.append(session_metrics(meta, entries, outputs))
+        except contracts.ContractError as e:
+            excluded.append((mp, str(e)))
 
-    print(f"{'session':<38} {'gest':<10} TP FN FP  prec  rec  onset  FP/min_t  FP/min_a")
+    hdr = (f"{'session':<36} {'gest':<10} TP MS FP SP LRC UNK "
+           f"prec  rec  o50  o95  FP/min")
+    print(hdr)
     for r in results:
-        print(f"{r['sid']:<38} {r['gesture']:<10} {r['tp']:>2} {r['fn']:>2} "
-              f"{r['fp']:>2}  {r['prec']:.2f}  {r['rec']:.2f}  "
-              f"{r['onset_ms']:5.0f}  {r['fp_min_total']:7.2f}  "
-              f"{r['fp_min_active']:7.2f}")
-
+        print(f"{r['sid']:<36} {r['gesture']:<10} {r['tp']:>2} {r['miss']:>2} "
+              f"{r['fp']:>2} {r['suppressed']:>2} {r['lr_confusion']:>3} "
+              f"{r['unknown_side']:>3}  {r['prec']:.2f}  {r['rec']:.2f}  "
+              f"{r['onset_p50']:3.0f} {r['onset_p95']:4.0f}  "
+              f"{r['fp_min_total']:6.2f}")
+    for mp, why in excluded:
+        print(f"  EXCLUDED {os.path.basename(mp)}: {why}")
     if not results:
-        print("(nessuna sessione trovata)")
+        print("(nessuna sessione nello split richiesto)")
         return
-    # aggregate + bootstrap CI a livello sessione
+
     rng = random.Random(0)
     def agg(sample):
-        tp = sum(r["tp"] for r in sample); fn = sum(r["fn"] for r in sample)
+        tp = sum(r["tp"] for r in sample)
+        fn = sum(r["miss"] for r in sample)
         fp = sum(r["fp"] for r in sample)
         return (tp / (tp + fp) if tp + fp else 0,
                 tp / (tp + fn) if tp + fn else 0)
     ps, rs = zip(*(agg([rng.choice(results) for _ in results])
                    for _ in range(BOOTSTRAP_N)))
-    p50 = sorted(ps); r50 = sorted(rs)
-    print(f"\nAGGREGATE prec={sum(r['prec'] for r in results)/len(results):.2f} "
+    p50, r50 = sorted(ps), sorted(rs)
+    print(f"\nAGGREGATE[{split}] prec={sum(r['prec'] for r in results)/len(results):.2f} "
           f"[CI95 {p50[50]:.2f}..{p50[1950]:.2f}] "
           f"rec={sum(r['rec'] for r in results)/len(results):.2f} "
-          f"[CI95 {r50[50]:.2f}..{r50[1950]:.2f}]  n_sessions={len(results)}")
+          f"[CI95 {r50[50]:.2f}..{r50[1950]:.2f}]  n={len(results)}")
+
+
+def evaluate_holdout():
+    """Final evaluation: unico path autorizzato sull'holdout."""
+    import holdout_lock
+    files = holdout_lock.open_holdout()
+    print(f"[final] holdout aperto: {len(files)} file — "
+          f"implementare replay su payload (v3.1)")
 
 
 if __name__ == "__main__":
-    d = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") \
-        else "sessions"
-    # default: solo split=evaluation (regola del piano); --all per diagnostica
-    evaluate(d, only_eval=("--all" not in sys.argv))
+    args = sys.argv[1:]
+    if "--final" in args:
+        evaluate_holdout()
+    else:
+        d = next((a for a in args if not a.startswith("-")), "sessions")
+        sp = "validation"
+        if "--split" in args:
+            sp = args[args.index("--split") + 1]
+        evaluate(d, split=sp)
