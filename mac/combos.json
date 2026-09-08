@@ -1,0 +1,12 @@
+{
+  "combos": [
+    {
+      "id": "double_jab",
+      "name": "Jab + Cross",
+      "steps": [
+        {"action": "punch", "direction": "+x", "min_speed": 3.2},
+        {"action": "punch", "direction": "+x", "min_speed": 3.2}
+      ]
+    }
+  ]
+}

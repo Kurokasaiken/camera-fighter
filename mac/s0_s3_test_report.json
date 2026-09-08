@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-08",
+  "environment": "macOS synthetic (no phone)",
+  "tests": {
+    "jitter_buffer": "11/11 PASS",
+    "spike": "7/7 PASS"
+  },
+  "determinism": {
+    "loss_05_reo_10_seeds_4": true,
+    "loss_10_reo_30_seeds_4": true
+  },
+  "classification_no_loss": {
+    "TP": 10,
+    "FN": 0,
+    "FP": 0,
+    "TN": 40,
+    "accuracy": 1.0,
+    "recall": 1.0,
+    "fp_rate": 0.0,
+    "pass_accuracy_95": true,
+    "pass_recall_90": true,
+    "pass_fp_1_40": true,
+    "overall_S2_pass": true
+  },
+  "classification_with_loss_reorder": {
+    "loss_0.00_reo_0.00": 10,
+    "loss_0.02_reo_0.05": 4,
+    "loss_0.05_reo_0.10": 1,
+    "loss_0.10_reo_0.20": 0,
+    "loss_0.10_reo_0.30": 0
+  }
+}
