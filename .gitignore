@@ -1,0 +1,17 @@
+__pycache__/
+venv/
+*.trace
+sessions/
+calibration.json
+mac/assets/main_hero/
+*.log
+.DS_Store
+.gradle/
+build/
+android/.gradle/
+android/app/build/
+android/local.properties
+*.apk
+*.keystore
+.idea/
+local.properties

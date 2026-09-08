@@ -1,0 +1,16 @@
+{
+  "punch": {
+    "min_elbow_angle": 140,
+    "min_wrist_speed": 6.0,
+    "min_wrist_accel": 25.0,
+    "min_wrist_extension": 0.20,
+    "cooldown_ms": 400
+  },
+  "kick": {
+    "min_knee_angle": 150,
+    "min_ankle_speed": 6.0,
+    "min_ankle_accel": 25.0,
+    "min_ankle_extension": 0.30,
+    "cooldown_ms": 500
+  }
+}
