@@ -15,7 +15,7 @@ import math
 from PySide6.QtGui import QColor, QPen, QBrush
 from PySide6.QtCore import Qt
 
-BLACK = QColor(30, 30, 40)          # corpo: scuro ma leggibile sul fondo (10,10,20)
+BLACK = QColor(0x1B, 0x1A, 0x19)    # corpo: nero sumi profondo, leggibile su carta (#EFE6D6-#D6C7AC)
 BACK = QColor(18, 18, 26)           # lato "dietro" ancora piu' scuro (profondita')
 EDGE = QColor(90, 90, 110)          # bordo sottile per staccare dal fondo
 EYE = QColor(240, 240, 235)
@@ -178,6 +178,16 @@ class SilhouetteRig:
             hx = sho_c[0] + (nx - sho_c[0]) * 0.8
             hy = sho_c[1] + (ny - sho_c[1]) * 0.8 - torso * 0.30
             r = self.head_r * torso
+
+            # collo: linea fra centro spalle e base testa
+            neck_base = sho_c
+            neck_top = (hx, hy + r * 0.4)
+            pen = QPen(self.BLACK, max(2, int(torso * 0.08)))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(int(neck_base[0]), int(neck_base[1]),
+                            int(neck_top[0]), int(neck_top[1]))
+
             self._dot(painter, hx, hy, r + 3, EDGE)
             self._dot(painter, hx, hy, r)
             self._dot(painter, hx + r * 0.35, hy - r * 0.1, r * 0.14, EYE)

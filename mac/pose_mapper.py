@@ -102,7 +102,27 @@ class LandmarkToAvatarMapper:
         self._straighten_arm(pose, "left_shoulder", "left_elbow", "left_wrist")
         self._straighten_arm(pose, "right_shoulder", "right_elbow", "right_wrist")
 
+        # Anti "braccio accorciato quando alzo lateralmente": vincolo di lunghezza osso
+        # ML Kit allucina profondità → articoli si accorciano. Forziamo lunghezze anatomiche
+        # proporzionate al torso (identico a silhouette.py LEN dict).
+        self._enforce_bone_length(pose, "left_shoulder", "left_elbow", "left_wrist", "left")
+        self._enforce_bone_length(pose, "right_shoulder", "right_elbow", "right_wrist", "right")
+        self._enforce_bone_length(pose, "left_hip", "left_knee", "left_ankle", "left")
+        self._enforce_bone_length(pose, "right_hip", "right_knee", "right_ankle", "right")
+
         return pose
+
+    # Lunghezze anatomiche fisse, identiche a silhouette.py LEN dict
+    BONE_LEN = {
+        ("left_shoulder", "left_elbow"): 0.50,
+        ("left_elbow", "left_wrist"): 0.50,
+        ("right_shoulder", "right_elbow"): 0.50,
+        ("right_elbow", "right_wrist"): 0.50,
+        ("left_hip", "left_knee"): 0.85,
+        ("left_knee", "left_ankle"): 0.85,
+        ("right_hip", "right_knee"): 0.85,
+        ("right_knee", "right_ankle"): 0.85,
+    }
 
     STRAIGHTEN_DEG = 165.0
 
@@ -123,3 +143,51 @@ class LandmarkToAvatarMapper:
         t = n1 / (n1 + n2)          # frazione spalla->gomito lungo il braccio
         e.x = s.x + (w.x - s.x) * t
         e.y = s.y + (w.y - s.y) * t
+
+    def _enforce_bone_length(self, pose, s_name, e_name, w_name, side):
+        """Forza lunghezze anatomiche fisse: contrasta allucinazione ML Kit profondità.
+
+        Quando il braccio esce dall'asse verticale, ML Kit allucina profondità →
+        joint si accorciano. Questo vincolo mantiene lunghezze proporzionate al torso.
+        """
+        s = getattr(pose, s_name, None)
+        e = getattr(pose, e_name, None)
+        w = getattr(pose, w_name, None)
+        if not (s and e and w):
+            return
+
+        # Lunghezze anatomiche in unita' torso
+        l1_target = self.BONE_LEN.get((s_name, e_name), 0.5)
+        l2_target = self.BONE_LEN.get((e_name, w_name), 0.5)
+
+        # Estrai torso length dalle spalle/fianchi
+        ls = getattr(pose, "left_shoulder", None)
+        rs = getattr(pose, "right_shoulder", None)
+        lh = getattr(pose, "left_hip", None)
+        rh = getattr(pose, "right_hip", None)
+        if not (ls and rs and lh and rh):
+            return
+
+        torso_length = math.hypot(
+            (ls.x + rs.x) / 2 - (lh.x + rh.x) / 2,
+            (ls.y + rs.y) / 2 - (lh.y + rh.y) / 2
+        )
+        if torso_length < 0.05:
+            return
+
+        l1_desired = l1_target * torso_length
+        l2_desired = l2_target * torso_length
+
+        # Direzione spalla->gomito, applica lunghezza desiderata
+        dx1, dy1 = e.x - s.x, e.y - s.y
+        d1 = math.hypot(dx1, dy1)
+        if d1 > 0.001:
+            e.x = s.x + (dx1 / d1) * l1_desired
+            e.y = s.y + (dy1 / d1) * l1_desired
+
+        # Direzione gomito->polso, applica lunghezza desiderata
+        dx2, dy2 = w.x - e.x, w.y - e.y
+        d2 = math.hypot(dx2, dy2)
+        if d2 > 0.001:
+            w.x = e.x + (dx2 / d2) * l2_desired
+            w.y = e.y + (dy2 / d2) * l2_desired

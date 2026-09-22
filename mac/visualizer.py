@@ -55,7 +55,7 @@ class SkeletonWidget(QWidget):
 
         points = []
         for lm in self.latest_landmarks:
-            x, y, c = lm
+            x, y, c = lm[0], lm[1], lm[2]
             points.append((self._mirror_x(x), self._y(y), c))
 
         # Linee scheletro
