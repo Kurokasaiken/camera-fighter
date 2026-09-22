@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import socket
 import time
+from collections import deque
 
 import msgpack
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from jitter_buffer import JitterBuffer
 from pipeline import Pipeline
@@ -25,6 +26,7 @@ from combat import CombatSystem
 from pose_mapper import LandmarkToAvatarMapper
 from renderer import SkeletonRenderer
 from telemetry import Telemetry
+from impact_effects import ImpactEffect
 
 UDP_IP = "0.0.0.0"
 UDP_PORT = 5005
@@ -41,6 +43,12 @@ def main():
     app = QApplication([])
     renderer = SkeletonRenderer()
     renderer.show()
+
+    # Effetti d'impatto (SUMI vocabolario)
+    effects = ImpactEffect()
+    pose_history = deque(maxlen=20)
+    renderer.effects = effects
+    renderer.pose_history = pose_history
 
     # due mapper separati: il filtro OneEuro e' stateful e i due path hanno
     # frequenze diverse — condividerlo corromperebbe entrambi.
@@ -77,6 +85,9 @@ def main():
                   flush=True)
         for h in out.hit_events:
             print(f"[HIT] {h.joint} v={h.speed}", flush=True)
+            effects.hitstop(60.0)
+            effects.ink_splash(renderer.width_f * 0.75, renderer.height_f * 0.5,
+                              count=10, decay_ms=180.0)
         for c in out.commits:
             banner["text"] = f"COMBO: {c.combo_id}!"
             banner["until"] = time.time() + 1.2
@@ -90,6 +101,7 @@ def main():
         renderer.pose = pose
         renderer.now = time.time()
         renderer.hit_marks = getattr(renderer, "hit_marks", [])
+        pose_history.append(pose)
         renderer.update()
         render_mono = (time.monotonic() - t0) * 1000.0
         seq = pkt.get("seq", -1)
@@ -100,12 +112,26 @@ def main():
     jb = JitterBuffer(on_emit=on_emit)
     t0 = time.monotonic()
     tel.start(t0)
+
+    def tick_effects():
+        """Timer 60Hz per effetti d'impatto."""
+        effects.tick(time.time())
+
+    timer_effects = QTimer()
+    timer_effects.timeout.connect(tick_effects)
+    timer_effects.start(16)  # ~60Hz
+
     print(f"[visual] UDP :{UDP_PORT} — dual-path on, muoviti! "
           f"(chiudi finestra per stop)", flush=True)
 
-    # tasto R = reset HP nemico al massimo
+    # Stato di controllo
+    debug_enabled = False
+    effects_enabled = True
+
+    # tasto R = reset HP nemico, S = silhouette, D = debug, V = effects, C = calibrate
     orig_key = renderer.keyPressEvent
     def key_handler(ev):
+        nonlocal debug_enabled, effects_enabled
         if ev.key() == Qt.Key_R:
             combat.reset()
             print("[visual] HP nemico resettati", flush=True)
@@ -113,6 +139,25 @@ def main():
             renderer.rig.enabled = not renderer.rig.enabled
             print(f"[visual] sprite rig {'ON' if renderer.rig.enabled else 'OFF'}",
                   flush=True)
+        elif ev.key() == Qt.Key_D:
+            debug_enabled = not debug_enabled
+            renderer.debug_enabled = debug_enabled
+            print(f"[visual] debug {'ON' if debug_enabled else 'OFF'}", flush=True)
+        elif ev.key() == Qt.Key_V:
+            effects_enabled = not effects_enabled
+            if not effects_enabled:
+                effects.hitstops.clear()
+                effects.flashes.clear()
+                effects.shakes.clear()
+                effects.ink_drops.clear()
+            print(f"[visual] effects vocabolario {'ON' if effects_enabled else 'OFF'}",
+                  flush=True)
+        elif ev.key() == Qt.Key_C:
+            if renderer.pose and combat:
+                combat.enemy.x = renderer.pose.torso_center.x
+                combat.enemy.y = renderer.pose.torso_center.y - 0.5
+                print(f"[visual] nemico calibrato a ({combat.enemy.x:.2f}, {combat.enemy.y:.2f})",
+                      flush=True)
         else:
             orig_key(ev)
     renderer.keyPressEvent = key_handler

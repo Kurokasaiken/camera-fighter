@@ -1,6 +1,8 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QImage, QLinearGradient
 from PySide6.QtWidgets import QWidget
+
+import numpy as np
 
 from avatar_pose import AvatarPose
 from combat import HITBOX_RADIUS_U
@@ -36,7 +38,12 @@ class SkeletonRenderer(QWidget):
         # Le coordinate avatar sono normalizzate sulla lunghezza del torso:
         # un corpo intero misura ~2.9 unita'. Con questo fattore occupa la
         # stessa altezza in pixel dello scheletro grezzo a sinistra.
-        self.scale_px = min(width, height) * 0.13
+        self.scale_px = min(width, height) * 0.26
+
+        # Bake grana carta (SUMI): 256x256 random texture, used via Multiply 6% opacity
+        rng = np.random.default_rng(7)
+        grana_data = rng.integers(0, 256, (256, 256), dtype=np.uint8)
+        self.grana_texture = QImage(grana_data.data, 256, 256, 256, QImage.Format_Grayscale8)
 
     def _to_screen_raw(self, x, y, cx, cy, scale):
         """Landmark 0..1 → schermo, in una regione, stessa direzione dell'avatar."""
@@ -152,21 +159,42 @@ class SkeletonRenderer(QWidget):
                 painter.setPen(Qt.NoPen)
                 painter.drawEllipse(x - 7, y - 7, 14, 14)
 
-        # Hitbox
-        r = int(self.scale_px * HITBOX_RADIUS_U)
-        for name in ["left_wrist", "right_wrist", "left_ankle", "right_ankle"]:
-            if name in points:
-                painter.setPen(QPen(QColor(255, 255, 0), 2))
-                painter.setBrush(QBrush(QColor(255, 255, 0, 80)))
-                x, y = points[name]
-                painter.drawEllipse(x - r, y - r, r * 2, r * 2)
+        # Hitbox — commented out for SUMI art direction
+        # r = int(self.scale_px * HITBOX_RADIUS_U)
+        # for name in ["left_wrist", "right_wrist", "left_ankle", "right_ankle"]:
+        #     if name in points:
+        #         painter.setPen(QPen(QColor(255, 255, 0), 2))
+        #         painter.setBrush(QBrush(QColor(255, 255, 0, 80)))
+        #         x, y = points[name]
+        #         painter.drawEllipse(x - r, y - r, r * 2, r * 2)
 
     def paintEvent(self, event):
         painter = QPainter(self)
+
+        # Screen shake: applica se effetti attivi
+        painter.save()
+        if hasattr(self, "effects"):
+            shake_x, shake_y = self.effects.shake_offset(self.now)
+            painter.translate(shake_x, shake_y)
+
         painter.fillRect(self.rect(), QColor(10, 10, 20))
 
-        # Linea divisoria
+        # Sfondo carta SUMI sulla destra (avatar panel)
         mid = self.width_f // 2
+        grad = QLinearGradient(0, 0, 0, self.height_f)
+        grad.setColorAt(0.0, QColor(0xEF, 0xE6, 0xD6))
+        grad.setColorAt(1.0, QColor(0xD6, 0xC7, 0xAC))
+        painter.fillRect(mid, 0, self.width_f - mid, self.height_f, QBrush(grad))
+
+        # Grana carta: disegna su destra con Multiply 6% opacity
+        painter.save()
+        painter.setCompositionMode(QPainter.CompositionMode_Multiply)
+        painter.setOpacity(0.06)
+        grana_scaled = self.grana_texture.scaledToWidth(self.width_f - mid)
+        painter.drawImage(mid, 0, grana_scaled)
+        painter.restore()
+
+        # Linea divisoria
         painter.setPen(QPen(QColor(60, 60, 60), 2, Qt.DotLine))
         painter.drawLine(mid, 0, mid, self.height_f)
 
@@ -191,7 +219,7 @@ class SkeletonRenderer(QWidget):
             ex, ey = self._u_to_screen(e.x, e.y, avatar_cx, avatar_cy)
             ex2, ey2 = self._u_to_screen(e.x + e.w, e.y + e.h, avatar_cx, avatar_cy)
             flashing = self.now < self.flash_until
-            painter.setBrush(QBrush(QColor(255, 220, 220) if flashing else QColor(180, 60, 60)))
+            painter.setBrush(QBrush(QColor(255, 220, 220) if flashing else QColor(0x8B, 0x2D, 0x2D)))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(ex, ey, ex2 - ex, ey2 - ey, 10, 10)
 
@@ -199,7 +227,7 @@ class SkeletonRenderer(QWidget):
             frac = e.hp / e.max_hp if e.max_hp else 0.0
             painter.setBrush(QBrush(QColor(50, 50, 50)))
             painter.drawRect(ex, ey - 18, ex2 - ex, 8)
-            painter.setBrush(QBrush(QColor(80, 220, 80)))
+            painter.setBrush(QBrush(QColor(0x64, 0xC8, 0x64)))
             painter.drawRect(ex, ey - 18, int((ex2 - ex) * frac), 8)
 
             if self.combat.ko_at is not None:
@@ -211,22 +239,57 @@ class SkeletonRenderer(QWidget):
         painter.setPen(QPen(QColor(80, 80, 80), 1, Qt.DotLine))
         painter.drawLine(avatar_cx, 0, avatar_cx, self.height_f)
 
+        # Terra + ombra (prima dell'avatar)
+        ground_y = int(avatar_cy + 1.0 * self.scale_px)
+        painter.setPen(QPen(QColor(0x8B, 0x6F, 0x47), 5))
+        painter.drawLine(int(avatar_cx - 3 * self.scale_px), ground_y, int(avatar_cx + 3 * self.scale_px), ground_y)
+
+        # Ombra ellittica sotto piedi
+        from PySide6.QtGui import QRadialGradient
+        shadow_grad = QRadialGradient(avatar_cx, ground_y, int(self.scale_px * 0.75))
+        shadow_grad.setColorAt(0.0, QColor(0, 0, 0, 130))
+        shadow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(shadow_grad))
+        painter.drawEllipse(int(avatar_cx - self.scale_px * 0.75), int(ground_y - self.scale_px * 0.15),
+                           int(self.scale_px * 1.5), int(self.scale_px * 0.3))
+
+        # Afterimage: pose[-6/-4/-2] con alpha 55/35/18%
+        if hasattr(self, "effects") and hasattr(self, "pose_history") and self.rig:
+            afterimage_list = self.effects.get_afterimage(self.pose_history, self.now)
+            for past_pose, alpha in afterimage_list:
+                if past_pose:
+                    painter.save()
+                    painter.setOpacity(alpha)
+                    points = {}
+                    for name, joint in past_pose.all_joints():
+                        points[name] = self._to_screen_avatar(joint, avatar_cx, avatar_cy)
+                    self.rig.draw(painter, points, self.scale_px)
+                    painter.restore()
+
         self._draw_avatar(painter, avatar_cx, avatar_cy)
 
-        # Strike zone del nuovo motore (unita' torso, origine anca):
-        # in coord avatar l'anca e' a y=+0.5 -> traslazione
-        try:
-            from pipeline import DEFAULT_HITBOX
-            hx, hy, hw, hh = DEFAULT_HITBOX
-            bx1, by1 = self._u_to_screen(hx, hy + 0.5, avatar_cx, avatar_cy)
-            bx2, by2 = self._u_to_screen(hx + hw, hy + hh + 0.5,
-                                         avatar_cx, avatar_cy)
-            painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
-            painter.setBrush(QBrush(QColor(255, 255, 0, 30)))
-            painter.drawRect(min(bx1, bx2), min(by1, by2),
-                             abs(bx2 - bx1), abs(by2 - by1))
-        except Exception:
-            pass
+        # Strike zone — commented out for SUMI art direction
+        # try:
+        #     from pipeline import DEFAULT_HITBOX
+        #     hx, hy, hw, hh = DEFAULT_HITBOX
+        #     bx1, by1 = self._u_to_screen(hx, hy + 0.5, avatar_cx, avatar_cy)
+        #     bx2, by2 = self._u_to_screen(hx + hw, hy + hh + 0.5,
+        #                                  avatar_cx, avatar_cy)
+        #     painter.setPen(QPen(QColor(255, 255, 0), 2, Qt.DashLine))
+        #     painter.setBrush(QBrush(QColor(255, 255, 0, 30)))
+        #     painter.drawRect(min(bx1, bx2), min(by1, by2),
+        #                      abs(bx2 - bx1), abs(by2 - by1))
+        # except Exception:
+        #     pass
+
+        # Ink splash: gocce nere con alpha decadimento
+        if hasattr(self, "effects"):
+            drops = self.effects.get_ink_drops(self.now)
+            painter.setPen(Qt.NoPen)
+            for x, y, r, alpha in drops:
+                painter.setBrush(QBrush(QColor(27, 26, 25, int(255 * alpha))))
+                painter.drawEllipse(int(x - r), int(y - r), int(2 * r), int(2 * r))
 
         # Segni di impatto
         for mx, my, expires in self.hit_marks:
@@ -238,27 +301,60 @@ class SkeletonRenderer(QWidget):
             r = int(self.scale_px * 0.25)
             painter.drawEllipse(sx - r, sy - r, r * 2, r * 2)
 
+        # Lampo bianco (flash): full-screen
+        if hasattr(self, "effects"):
+            flash_alpha = self.effects.is_flash_active(self.now)
+            if flash_alpha > 0.0:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(255, 255, 255, int(255 * flash_alpha))))
+                painter.drawRect(self.rect())
+
+        # Debug inset: 200×300 top-left, 50% opacity
+        if hasattr(self, "debug_enabled") and self.debug_enabled:
+            painter.save()
+            painter.setOpacity(0.5)
+            painter.setBrush(QBrush(QColor(0, 0, 0)))
+            painter.setPen(QPen(QColor(200, 200, 200), 1))
+            painter.drawRect(10, 10, 200, 300)
+            painter.setOpacity(1.0)
+            painter.setPen(QColor(200, 200, 200))
+            painter.setFont(QFont("Helvetica", 9))
+            if self.pose:
+                y_txt = 25
+                painter.drawText(15, y_txt, f"Torso: ({self.pose.torso_center.x:.2f}, {self.pose.torso_center.y:.2f})")
+                painter.drawText(15, y_txt + 15, f"L.Shoulder: ({self.pose.left_shoulder.x:.2f}, {self.pose.left_shoulder.y:.2f})")
+                painter.drawText(15, y_txt + 30, f"R.Shoulder: ({self.pose.right_shoulder.x:.2f}, {self.pose.right_shoulder.y:.2f})")
+                painter.drawText(15, y_txt + 45, f"L.Wrist: ({self.pose.left_wrist.x:.2f}, {self.pose.left_wrist.y:.2f})")
+                painter.drawText(15, y_txt + 60, f"R.Wrist: ({self.pose.right_wrist.x:.2f}, {self.pose.right_wrist.y:.2f})")
+            if hasattr(self, "effects"):
+                y_eff = 25 + 80
+                hitstop = "ON" if self.effects.is_hitstop_active(self.now) else "OFF"
+                painter.drawText(15, y_eff, f"Hitstop: {hitstop}")
+                painter.drawText(15, y_eff + 15, f"Flash: {self.effects.is_flash_active(self.now):.2f}")
+                painter.drawText(15, y_eff + 30, f"Drops: {len(self.effects.ink_drops)}")
+            painter.restore()
+
         # UI
-        painter.setPen(QColor(255, 255, 255))
+        painter.setPen(QColor(0xCC, 0xCC, 0xCC))
         font = QFont("Helvetica", 14)
         painter.setFont(font)
         hp = self.combat.enemy.hp if self.combat else 0
         painter.drawText(20, self.height_f - 40, f"HP nemico: {hp}")
         painter.drawText(20, self.height_f - 20, f"FPS: {self.fps:.1f} | Landmarks: {len(self.raw_landmarks)}")
 
-        # Diagnostica: lunghezza braccio dell'AVATAR (unita' torso avatar),
-        # quella che decide il reach verso il nemico
-        if self.pose:
-            import math as _m
-            out = []
-            for s, e, tag in ((self.pose.left_shoulder, self.pose.left_elbow, "L"),
-                              (self.pose.right_shoulder, self.pose.right_elbow, "R")):
-                d = _m.hypot(e.x - s.x, e.y - s.y)
-                out.append(f"{tag} {d:.2f}")
-            painter.setPen(QColor(255, 230, 120))
-            painter.setFont(QFont("Helvetica", 34, QFont.Bold))
-            painter.drawText(20, 90, "    ".join(out))
+        # Diagnostica reach — commented out for SUMI art direction
+        # if self.pose:
+        #     import math as _m
+        #     out = []
+        #     for s, e, tag in ((self.pose.left_shoulder, self.pose.left_elbow, "L"),
+        #                       (self.pose.right_shoulder, self.pose.right_elbow, "R")):
+        #         d = _m.hypot(e.x - s.x, e.y - s.y)
+        #         out.append(f"{tag} {d:.2f}")
+        #     painter.setPen(QColor(255, 230, 120))
+        #     painter.setFont(QFont("Helvetica", 34, QFont.Bold))
+        #     painter.drawText(20, 90, "    ".join(out))
 
+        painter.restore()
         painter.end()
 
     def update_pose(self, pose: AvatarPose, raw_landmarks, fps: float, hits=()):
