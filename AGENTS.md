@@ -22,3 +22,30 @@ If `plans/INDEX.md` exists and the session touches plans: read it for the curren
 When you learn a non-obvious, durable fact: add it to `context/` following `CONTEXT-SPEC.md`.
 
 `archive/` is historical exploration — not normative, regardless of what it claims internally.
+
+## Focus: nessun furto del foreground (CTR-foreground-001, ruling universale 2026-11-20)
+
+Il Director non deve mai perdere la finestra che sta guardando. **Qualsiasi**
+finestra, pagina, app o programma aperto dall'agente — o da un tool che
+l'agente invoca — deve aprirsi **in background o headless**. Sempre e
+comunque, obbligatoriamente.
+
+- **Ikemen Go** e qualsiasi altro programma esterno (engine, emulatori, app
+  native/Electron): mai lanciati in modo che la finestra venga in primo
+  piano — `open -g -j` (macOS) oppure il lancio è un passo manuale del
+  Director.
+- Browser, pagine di test, Canary/Chrome/Chromium, report HTML, preview →
+  headless oppure `open -g`; mai `open` senza `-g`, mai `xdg-open`/`start`.
+- Vietati: `osascript ... to activate`, `Page.bringToFront`,
+  `window.focus()`, `window.open` da automazione, `headless: false`, run
+  `--headed`/`--ui`, attach CDP a browser headed / `Target.createTarget`
+  senza `background:true` (attivazione implicita: creare un tab lo attiva e
+  alza la finestra).
+- Tool nuovi nascono focus-safe: background/headless come default, nessun
+  percorso che possa portare un'app in primo piano.
+- Unica eccezione: richiesta esplicita del Director di una finestra visibile
+  nella sessione corrente — mai "per controllare in fretta".
+
+Contratto canonico: `mind-weaver/.mw/contracts/ui-focus.md`
+(CTR-foreground-001). Regola globale:
+`~/.devin/rules/no-foreground-windows.md`.
