@@ -51,3 +51,31 @@
 - Vocabolario d'impatto (hitstop/lampo/scossa/schizzo/afterimage) è testabile/cuttabile se non regge su persona reale.
 - Non toccare: audio, camera smorzata, combattimento, jitter_buffer, leg_tracker durante PLAN-049.
 - Mind Weaver non installato formalmente (no `.mw/`), quindi deliberazione manual (ho usato workflow invece di mw-iterative-deliberate.py).
+
+---
+
+## 2026-11-22 — Porting fight-kernel MUGEN (PLAN-050+ candidato)
+
+**Aggiunto `mac/fight_kernel.py`** (~500 righe): kernel di combattimento con
+semantica MUGEN 1.1 portata dalla decompilazione `mugen-unleashed` (repo
+fighting-style/vendor — ricostruzione C di mugen.exe verificata per diff):
+
+- **Stati a tempo**: IDLE/ATTACK(startup→active→recovery)/HITSTUN/BLOCKSTUN/
+  DOWN/GETUP/KO — le mosse sono `MoveDef` (limb, tempi in tick 60Hz, danno,
+  hitstop, hitstun, blockstun, knockback, reach, fall).
+- **clsn separati**: box d'attacco vivo solo nella fase ACTIVE sull'arto che
+  colpisce; hurtbox corpo sempre. Dedup seriale (una mossa = max 1 hit/target).
+- **hitstop**: freeze di entrambi sul connect (char.c:203 unleashed).
+- **guard**: parata tenuta + attacco in range → blockstun + chip damage
+  (char.c:268-340 unleashed).
+- **dodge = i-frames** (NotHitBy MUGEN), fall flag → DOWN→GETUP, combo
+  counter in hitstun, KO dedicato.
+- **Tick deterministico 60Hz** con accumulo dt (cap 4/frame) + AI nemico
+  seeded xorshift → replayabile; `snapshot()` serializzabile per dump.
+
+**`mac/test_fight_kernel.py`**: 21 check verdi (hit, hitonce, guard, hitstop
+freeze, KO, down/getup, dodge i-frames, determinismo, AI reattiva).
+
+**Caveat**: costanti riscalate per latenza camera (finestre ~2x MUGEN);
+nemico = AI minima (jab/hook + parata reattiva) che chiude la distanza.
+Non ancora cablato in pipeline.py/renderer — integration next step.
